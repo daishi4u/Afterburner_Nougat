@@ -21,13 +21,7 @@ enum action {
 	STAY,
 };
 
-struct hotplug_hstates_usage {
-	unsigned long time;
-};
-
 struct exynos_hotplug_ctrl {
-	ktime_t last_time;
-	ktime_t last_check_time;
 	unsigned int sampling_rate;
 	unsigned int up_threshold;
 	unsigned int down_threshold;
@@ -37,7 +31,6 @@ struct exynos_hotplug_ctrl {
 	int min_lock;
 	int force_hstate;
 	int cores_online;
-	struct hotplug_hstates_usage usage[NR_CPUS];
 };
 
 
@@ -94,25 +87,6 @@ static void __ref hotplug_cpu(int cores)
 	}
 }
 
-static s64 hotplug_update_time_status(void)
-{
-	ktime_t curr_time, last_time;
-	s64 diff;
-
-	curr_time = ktime_get();
-	last_time = ctrl_hotplug.last_time;
-
-	diff = ktime_to_ms(ktime_sub(curr_time, last_time));
-
-	if (diff > INT_MAX)
-		diff = INT_MAX;
-
-	ctrl_hotplug.usage[ctrl_hotplug.cores_online].time += diff;
-	ctrl_hotplug.last_time = curr_time;
-
-	return diff;
-}
-
 static void hotplug_enter_hstate(bool force, int cores)
 {
 	int min_cores, max_cores;
@@ -138,18 +112,10 @@ static void hotplug_enter_hstate(bool force, int cores)
 	if (ctrl_hotplug.cores_online == cores)
 		return;
 
-	spin_lock(&hstate_status_lock);
-	hotplug_update_time_status();
-	spin_unlock(&hstate_status_lock);
-
 	hotplug_cpu(cores);
 
 	atomic_set(&freq_history[UP], 0);
 	atomic_set(&freq_history[DOWN], 0);
-
-	spin_lock(&hstate_status_lock);
-	hotplug_update_time_status();
-	spin_unlock(&hstate_status_lock);
 
 	ctrl_hotplug.cores_online = cores;
 }
@@ -415,23 +381,6 @@ out:
 	return count;
 }
 
-static ssize_t show_time_in_state(struct device *dev,
-	struct device_attribute *attr, char *buf)
-{
-	ssize_t len = 0;
-	int i;
-
-	spin_lock(&hstate_status_lock);
-	hotplug_update_time_status();
-	spin_unlock(&hstate_status_lock);
-
-	for (i = 0; i < NR_CPUS; i++) {
-		len += sprintf(buf + len, "%d %llu\n", i,
-				(unsigned long long)ctrl_hotplug.usage[i].time);
-	}
-	return len;
-}
-
 static DEVICE_ATTR(up_threshold, S_IRUGO | S_IWUSR, show_up_threshold, store_up_threshold);
 static DEVICE_ATTR(down_threshold, S_IRUGO | S_IWUSR, show_down_threshold, store_down_threshold);
 static DEVICE_ATTR(sampling_rate, S_IRUGO | S_IWUSR, show_sampling_rate, store_sampling_rate);
@@ -442,8 +391,6 @@ static DEVICE_ATTR(cores_online, S_IRUGO, show_cores_online, NULL);
 static DEVICE_ATTR(min_lock, S_IRUGO | S_IWUSR, show_min_lock, store_min_lock);
 static DEVICE_ATTR(max_lock, S_IRUGO | S_IWUSR, show_max_lock, store_max_lock);
 
-static DEVICE_ATTR(time_in_state, S_IRUGO, show_time_in_state, NULL);
-
 static struct attribute *clusterhotplug_default_attrs[] = {
 	&dev_attr_up_threshold.attr,
 	&dev_attr_down_threshold.attr,
@@ -452,7 +399,6 @@ static struct attribute *clusterhotplug_default_attrs[] = {
 	&dev_attr_cpu_down_load.attr,
 	&dev_attr_force_hstate.attr,
 	&dev_attr_cores_online.attr,
-	&dev_attr_time_in_state.attr,
 	&dev_attr_min_lock.attr,
 	&dev_attr_max_lock.attr,
 	NULL
